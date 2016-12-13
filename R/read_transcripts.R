@@ -65,6 +65,8 @@ read_transcripts <- function(file.names, use.mor=FALSE, debug=FALSE, dir = "corp
     spe.tier$content <- gsub(x=spe.tier$content, pattern="[(]laughing[)]", replacement="") # remove notes for laughing
     spe.tier$content <- gsub(x=spe.tier$content, pattern="(.)", replacement="", fixed=TRUE) # remove pauses
     spe.tier$content <- gsub(x=spe.tier$content, pattern="[(](.*)[)]", replacement="\\1") # remove all other parentheses
+    spe.tier$content <- gsub(x=spe.tier$content, pattern="[(]", replacement="") # remove all other parentheses
+    spe.tier$content <- gsub(x=spe.tier$content, pattern="[)]", replacement="") # remove all other parentheses
     spe.tier$content <- gsub(x=spe.tier$content, pattern="[<](.*)[>]", replacement="\\1") # remove all < >
     spe.tier$content[!grepl(x=spe.tier$content, pattern="[[:alpha:]]")] <- NA  # erase utterances that don't have at least one letter in them (just punctuation, symbols, and numbers)
     
@@ -129,20 +131,25 @@ read_transcripts <- function(file.names, use.mor=FALSE, debug=FALSE, dir = "corp
     
     # speaker ids
     participants <- grep(this.transcript, pattern="^@Participants", value=TRUE)
-    participants <- gsub(x=participants, pattern="@Participants:\t", replacement="")
+    participants <- gsub(x=participants, pattern="@Participants:[[:space:]]+", replacement="")
     speaker.ids <- data.frame(speaker=strsplit(participants, ", ", fixed = TRUE)[[1]]) %>%
       separate(col=speaker, into=c("speaker", "name", "role"), sep=" ", remove=TRUE , extra="drop")
     # add speaker id info to utterances data frame
     utts <- left_join(utts, speaker.ids, by="speaker")
+    
     # get child's age at this recording
     ids <- grep(this.transcript, pattern="^@ID:", value=TRUE)
     chi.id <- ids[grep(x=ids, pattern="[|]Target_Child[|]|[|]Child[|]")]
+    
+    # no @ID headers in file?
     if(length(ids) == 0){
-      chi.id <- NA
+      # set chi.id to NA
+      chi.id <- NA 
       message("No ID headers. Could not identify Target Child in ", this.file)
-      # look for age information elsewhere
+      # look for possible age information elsewhere
       age.info <- grep(this.transcript, pattern="^@Birth of CHI|^@Date|^@Age of CHI", value=TRUE)
     }
+    
     # if more than one child comes up and one is labeled Target_Child, use that
     if(length(chi.id) > 1){
       target.id <- chi.id[grep(x=chi.id, pattern = "[|]Target_Child[|]")]
@@ -154,15 +161,59 @@ read_transcripts <- function(file.names, use.mor=FALSE, debug=FALSE, dir = "corp
         # in this case, also make "Child" into "Target_Child" for role
         utts$role[utts$role=="Child"] <- "Target_Child"
       } else {
+        # set chi.id to NA
         chi.id <- NA
         message("Could not identify Target Child in ", this.file)
       }
     }
+    
+    # when there is no chi.id from @ID headers
+    if(is.na(chi.id)){
+      # if there's no chi.id after checking @ID headers, enter NAs for age info
+      utts$age <- NA
+      utts$y <- NA
+      utts$m <- NA
+      utts$d <- NA
+      utts$age.mos <- NA
+      
+      # if there is age.info available (not in the @ID header), try to calc age
+      if(length(age.info) > 0){
+        dob <- grep(age.info, pattern="^@Birth", value=TRUE)
+        dob <- gsub(x=dob, pattern = "^@Birth.* ([[:digit:]].*)", replacement = "\\1")
+        dor <- grep(age.info, pattern="^@Date", value=TRUE)
+        dor <- gsub(x=dor, pattern = "^@Date.* ([[:digit:]].*)", replacement = "\\1")
+        age <- grep(age.info, pattern="^@Age", value=TRUE)
+        age <- gsub(x=age, pattern = "^@Age.* ([[:digit:]].*)", replacement = "\\1")
+        
+        # both date of birth (dob) and date of recording (dor) available
+        if(length(dob)*length(dor) > 0){
+          utts$age <- NA
+          utts$y <- NA
+          utts$m <- NA
+          utts$d <- NA
+          age.calc <- difftime(lubridate::parse_date_time(dor, orders="dmy"), 
+                               lubridate::parse_date_time(dob, orders="dmy"), 
+                               units="days")
+          utts$age.mos <- as.double(age.calc)/(365.25/12) # convert to months
+        } 
+        # if age is available, use that (and potentially overwrite age.mos calculated from dob and dor)
+        if(length(age) > 0){
+          utts$age <- age
+          age <- stringr::str_split_fixed(age, pattern="[^[:digit:]]", n=3)
+          utts$y <- as.numeric(age[1])
+          utts$m <- as.numeric(age[2])
+          utts$d <- as.numeric(age[3])
+          utts$age.mos <- utts$y*12 + utts$m + utts$d/(365.25/12)
+        }
+      }
+    }
+    
+    # if there is chi.id info from the @ID headers
     if(!is.na(chi.id)){
+      # fill in age info from chi.id
       age <- gsub(x=chi.id, pattern=".*[[:upper:][:digit:]]{3}[|]([[:digit:][:punct:]]+)[|].*", replacement="\\1", perl=T)
       # add age to utterances data frame
       utts$age <- age
-      
       # separate age into year, month, day
       utts <- utts %>%
         tidyr::separate(col=age, into=c("y", "m", "d"), extra="drop", remove=F)
@@ -170,43 +221,6 @@ read_transcripts <- function(file.names, use.mor=FALSE, debug=FALSE, dir = "corp
       utts$m <- ifelse(is.na(utts$m), 0, as.numeric(utts$m))
       utts$d <- ifelse(is.na(utts$d), 0, as.numeric(utts$d))
       utts$age.mos <- utts$y*12 + utts$m + utts$d/(365.25/12) # calculate one numerical value for age in months
-    } else if(length(age.info) > 0){
-      dob <- grep(age.info, pattern="^@Birth", value=TRUE)
-      dob <- gsub(x=dob, pattern = "^@Birth.* ([[:digit:]].*)", replacement = "\\1")
-      dor <- grep(age.info, pattern="^@Date", value=TRUE)
-      dor <- gsub(x=dor, pattern = "^@Date.* ([[:digit:]].*)", replacement = "\\1")
-      age <- grep(age.info, pattern="^@Age", value=TRUE)
-      age <- gsub(x=age, pattern = "^@Age.* ([[:digit:]].*)", replacement = "\\1")
-      if(length(dob)*length(dor) > 0){
-        library(lubridate)
-        utts$age <- NA
-        utts$y <- NA
-        utts$m <- NA
-        utts$d <- NA
-        age.calc <- difftime(parse_date_time(dor, orders="dmy"), parse_date_time(dob, orders="dmy"), units="days")
-        utts$age.mos <- as.double(age.calc)/(365.25/12) # convert to months
-      } else {
-        utts$age <- NA
-        utts$y <- NA
-        utts$m <- NA
-        utts$d <- NA
-        utts$age.mos <- NA
-      }
-      if(length(age) > 0){
-        library(stringr)
-        utts$age <- age
-        age <- str_split_fixed(age, pattern="[^[:digit:]]", n=3)
-        utts$y <- as.numeric(age[1])
-        utts$m <- as.numeric(age[2])
-        utts$d <- as.numeric(age[3])
-        utts$age.mos <- utts$y*12 + utts$m + utts$d/(365.25/12)
-      }
-    } else {
-      utts$age <- NA
-      utts$y <- NA
-      utts$m <- NA
-      utts$d <- NA
-      utts$age.mos <- NA
     }
     
     # fix missing values in role (fill them in with the speaker code)
@@ -228,8 +242,9 @@ read_transcripts <- function(file.names, use.mor=FALSE, debug=FALSE, dir = "corp
       # make sure columns are in the right order
       utts <- dplyr::select(utts, speaker, utt.num, utterance, mor, file, name, role, age, y, m, d, age.mos)
     }
-    return(utts)
   } else {
     message("No tiers found for ", this.file)
+    utts <- data.frame(speaker = NA, utt.num = NA, utterance = NA, mor = NA, file=this.file, name = NA, role = NA, age = NA, y = NA, m = NA, d = NA, age.mos = NA)
   }
+  return(utts)
 }
