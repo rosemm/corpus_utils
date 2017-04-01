@@ -1,4 +1,4 @@
-
+#' @export
 read_transcripts <- function(file.names, use.mor=FALSE, debug=FALSE, dir = "corpora"){
   
   if( length(unique(file.names$file)) > 1 ) message("More than one transcription file being analyzed simultaneously! Code won't work.") # only analyze one file at a time

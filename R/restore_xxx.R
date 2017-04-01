@@ -1,3 +1,4 @@
+#' @export
 restore_xxx <- function(utts){
   if( any(grepl(x = utts$utterance, pattern = "xxx")) ){
     stopifnot( length(utts$utterance) == 1 )

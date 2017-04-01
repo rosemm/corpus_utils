@@ -1,4 +1,4 @@
-
+#' @export
 collect_transcripts <- function(use.corpus.as.name=c("always", "as.needed", "never"), dir="corpora", test.sample=NULL){
   
   stopifnot(any(c("always", "as.needed", "never")==use.corpus.as.name))
