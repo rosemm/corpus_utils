@@ -1,4 +1,4 @@
-Package: corpus_utils
+Package: corpusutils
 Type: Package
 Title: Functions for working with CHILDES corpora
 Version: 1.0
